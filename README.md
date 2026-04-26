@@ -16,7 +16,8 @@
 https://docs.google.com/document/d/1uZoJBQWJaRSxPqduQSTyGPjtWPWC251R/edit
 
 ## Диаграмма сущностей
-<img width="1139" height="779" alt="image" src="https://github.com/user-attachments/assets/c1f4b8dd-7d60-4564-8094-ee9dbec1df94" />
+<img width="1066" height="752" alt="image" src="https://github.com/user-attachments/assets/12ed38f9-7b63-4d7e-ac5c-c1ecbe59ba0e" />
+
 
 
 
