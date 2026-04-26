@@ -15,6 +15,7 @@
 ## Техническое задание
 https://docs.google.com/document/d/1uZoJBQWJaRSxPqduQSTyGPjtWPWC251R/edit
 
+## Диаграмма сущностей
 <img width="1371" height="788" alt="image" src="https://github.com/user-attachments/assets/50c689de-8177-492e-bbc8-e53b1f904fe6" />
 
 
