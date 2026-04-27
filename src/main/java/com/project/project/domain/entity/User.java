@@ -3,11 +3,14 @@ package com.project.project.domain.entity;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+@Slf4j
 @AllArgsConstructor
 @NoArgsConstructor
 @Entity
@@ -18,15 +21,15 @@ public class User {
     @Column(name = "id", nullable = false)
     private Long id;
 
-    @Column(name = "username")
+    @Column(name = "username", nullable = false)
     private String username;
 
-    @Column(name = "password")
+    @Column(name = "password", nullable = false)
     private String password;
 
     @Column(name = "role")
     @Enumerated(EnumType.STRING)
-    private List<Role> roles;
+    private List<Role> roles = new ArrayList<>();
 
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL)
     private Set<ProjectMember> projectMembers = new HashSet<>();
@@ -69,5 +72,10 @@ public class User {
 
     public void setProjectMembers(Set<ProjectMember> projectMembers) {
         this.projectMembers = projectMembers;
+    }
+
+    public void addRole(Role role) {
+        log.info("Role added to user! userId={}", id);
+        roles.add(role);
     }
 }
