@@ -2,6 +2,7 @@ package com.project.project.config;
 
 import com.project.project.domain.impl.security.JwtService;
 import com.project.project.domain.impl.security.UserDetailsServiceImpl;
+import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -32,8 +33,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         try {
             String jwt = jwtService.getJwtFromCookie(request);
-            jwtService.validateToken(jwt);
-            String userEmail = jwtService.extractUsername();
+            if (jwt == null || jwt.isEmpty()) {
+                filterChain.doFilter(request, response);
+                return;
+            }
+            Claims claims = jwtService.validateToken(jwt);
+            String userEmail = jwtService.extractUsername(claims);
 
             UserDetails userDetails = customUserDetailsService.loadUserByUsername(userEmail);
 

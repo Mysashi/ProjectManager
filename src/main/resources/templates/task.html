@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Задачи проекта</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', sans-serif; background: #f4f7f6; padding: 20px; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .task-item { border-bottom: 1px solid #eee; padding: 15px 0; display: flex; justify-content: space-between; align-items: center; }
+        .task-info { display: flex; flex-direction: column; }
+        .task-name { font-weight: bold; font-size: 1.1rem; color: #2c3e50; }
+        .task-meta { font-size: 0.85rem; color: #666; margin-top: 4px; }
+        .controls { display: flex; gap: 8px; align-items: center; }
+        .btn { padding: 6px 12px; cursor: pointer; border: none; border-radius: 4px; font-weight: 600; font-size: 0.8rem; }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-warning { background: #ffc107; color: #333; }
+        .btn-delete { background: #dc3545; color: white; }
+        .create-form { display: flex; gap: 10px; margin-bottom: 20px; }
+        input, select { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        input { flex-grow: 1; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <button class="btn" onclick="window.location.href='project-page?id=' + projectId">← Назад к проекту</button>
+        <h1>Задачи проекта</h1>
+    </div>
+
+    <div class="create-form">
+        <input type="text" id="taskName" placeholder="Название новой задачи">
+        <button class="btn btn-primary" onclick="createTask()">+ Добавить задачу</button>
+    </div>
+
+    <div id="taskList"></div>
+</div>
+
+<script>
+    const projectId = new URLSearchParams(window.location.search).get('projectId');
+    const token = localStorage.getItem('accessToken');
+    let stompClient = null;
+    let projectMembers = []; // Глобальный список участников
+
+    window.onload = async () => {
+        if (!projectId) return alert("Ошибка: отсутствует projectId");
+
+        // 1. Сначала загружаем участников, чтобы потом использовать их в рендере задач
+        await loadMembers();
+
+        // 2. Затем загружаем задачи
+        fetchTasks();
+
+        // 3. Подключаем WebSocket
+        connectWebSocket();
+    };
+
+    async function loadMembers() {
+        try {
+            const res = await fetch(`/project/${projectId}/users`, {
+                headers: { 'Authorization': 'Bearer ' + token }
+            });
+            if (res.ok) projectMembers = await res.json();
+        } catch (err) {
+            console.error("Ошибка загрузки участников:", err);
+        }
+    }
+
+    function connectWebSocket() {
+        const socket = new SockJS('/ws-project');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({ 'Authorization': 'Bearer ' + token }, () => {
+            stompClient.subscribe(`/topic/project/${projectId}/tasks`, (msg) => {
+                const data = JSON.parse(msg.body);
+                if (data.action === "DELETE") {
+                    document.getElementById(`task-${data.taskId}`)?.remove();
+                } else {
+                    renderTask(data);
+                }
+            });
+        });
+    }
+
+    function fetchTasks() {
+        fetch(`/task/${projectId}/tasks`, {
+            headers: { 'Authorization': 'Bearer ' + token }
+        })
+        .then(res => res.ok ? res.json() : [])
+        .then(tasks => {
+            const list = document.getElementById('taskList');
+            list.innerHTML = '';
+            tasks.forEach(t => renderTask(t));
+        })
+        .catch(err => console.error("Ошибка загрузки задач:", err));
+    }
+
+    function renderTask(task) {
+        let el = document.getElementById(`task-${task.id}`);
+        if (!el) {
+            el = document.createElement('div');
+            el.id = `task-${task.id}`;
+            el.className = 'task-item';
+            document.getElementById('taskList').appendChild(el);
+        }
+
+        // Формируем список выбора исполнителя
+        const memberOptions = projectMembers.map(m =>
+            `<option value="${m.id}" ${task.assigneeId === m.id ? 'selected' : ''}>${m.username}</option>`
+        ).join('');
+
+        el.innerHTML = `
+            <div class="task-info">
+                <span class="task-name">${task.name}</span>
+                <span class="task-meta">Статус: ${task.status}</span>
+            </div>
+            <div class="controls">
+                <select onchange="assignTask(${task.id}, this.value)">
+                    <option value="">Назначить...</option>
+                    ${memberOptions}
+                </select>
+                ${task.status !== 'PROCESSING' ? `<button class="btn btn-warning" onclick="changeStatus(${task.id}, 'PROCESSING')">В работу</button>` : ''}
+                ${task.status !== 'CLOSED' ? `<button class="btn btn-success" onclick="changeStatus(${task.id}, 'CLOSED')">Закрыть</button>` : ''}
+                <button class="btn btn-delete" onclick="deleteTask(${task.id})">🗑️</button>
+            </div>
+        `;
+    }
+
+    function createTask() {
+        const name = document.getElementById('taskName').value;
+        if (!name) return;
+        stompClient.send(`/app/project/${projectId}/task/create`, {}, JSON.stringify({
+            name: name,
+            projectId: parseInt(projectId)
+        }));
+        document.getElementById('taskName').value = '';
+    }
+
+    function changeStatus(taskId, newStatus) {
+        stompClient.send(`/app/project/${projectId}/task/update`, {}, JSON.stringify({
+            id: taskId,
+            status: newStatus,
+            projectId: parseInt(projectId)
+        }));
+    }
+
+    function assignTask(taskId, userId) {
+        if (!userId) return;
+        stompClient.send(`/app/project/${projectId}/task/assign`, {}, JSON.stringify({
+            taskId: taskId,
+            userId: parseInt(userId),
+            projectId: parseInt(projectId)
+        }));
+    }
+
+    function deleteTask(taskId) {
+        if(confirm("Удалить задачу?")) {
+            stompClient.send(`/app/project/${projectId}/task/delete/${taskId}`, {}, {});
+        }
+    }
+</script>
+</body>
+</html>

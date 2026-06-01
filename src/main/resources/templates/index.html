@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>ProjectProManager — Live Dashboard</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        :root { --primary: #007bff; --success: #28a745; --danger: #dc3545; --dark: #343a40; }
+        body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f8f9fa; margin: 0; padding: 20px; color: #333; }
+        .main-layout { display: grid; grid-template-columns: 420px 1fr; gap: 25px; max-width: 1400px; margin: 0 auto; }
+        .card { background: #fff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        h2 { margin: 0 0 15px 0; font-size: 1.1rem; border-bottom: 2px solid #f1f1f1; padding-bottom: 8px; color: var(--dark); }
+
+        .form-group { display: flex; flex-direction: column; gap: 12px; margin-bottom: 15px; }
+        input, textarea {
+            padding: 11px; border: 1px solid #ced4da; border-radius: 8px; outline: none; transition: 0.2s; font-family: inherit;
+        }
+        input:focus, textarea:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,123,255,0.1); }
+        textarea { resize: vertical; min-height: 80px; }
+
+        button {
+            padding: 10px 18px; border: none; border-radius: 8px; cursor: pointer;
+            font-weight: 600; transition: 0.2s; color: #fff;
+        }
+        .btn-ws { background: var(--success); }
+        .btn-danger { background: var(--danger); }
+        .btn-info { background: #6c757d; }
+
+        .scroll-area { height: 600px; overflow-y: auto; }
+        .project-card {
+            background: #fff; padding: 16px; border-left: 6px solid var(--success);
+            border-radius: 8px; display: flex; justify-content: space-between;
+            align-items: center; margin-bottom: 12px; border: 1px solid #eee;
+        }
+        .project-meta b { display: block; font-size: 1.1rem; }
+        .project-meta span { color: #666; font-size: 0.9rem; }
+
+        pre { background: #212529; color: #a5b1c2; padding: 12px; border-radius: 8px; font-size: 12px; max-height: 200px; overflow: auto; }
+        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; margin-bottom: 15px; }
+        .online { background: #e6ffed; color: #28a745; }
+        .offline { background: #ffeef0; color: #dc3545; }
+    </style>
+</head>
+<body>
+
+<div class="main-layout">
+    <div class="left-panel">
+        <div class="card">
+            <h2 id="userNameDisplay">Привет, пользователь!</h2>
+            <button class="btn-danger" onclick="logout()" style="width: 100%; margin-top: 10px;">Выйти</button>
+            <div id="wsStatus" class="status-badge offline">WebSocket: Отключен</div>
+            <button class="btn-danger" onclick="logout()" style="width: 100%">Выйти из аккаунта</button>
+        </div>
+
+        <div class="card">
+            <h2>Создание проекта</h2>
+            <div class="form-group">
+                <input type="text" id="nameInput" placeholder="Название проекта (обязательно)...">
+                <textarea id="descInput" placeholder="Описание проекта..."></textarea>
+                <button class="btn-ws" onclick="createProjectWs()">Создать через WebSocket</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Действия по ID</h2>
+            <div class="form-group" style="flex-direction: row;">
+                <input type="number" id="idInput" placeholder="ID проекта">
+                <button class="btn-info" onclick="goToProject()">Открыть</button>
+            </div>
+            <button class="btn-ws" onclick="joinProjectWs()" style="width: 100%">Вступить в проект</button>
+        </div>
+
+        <div class="card">
+            <h2>Лог событий</h2>
+            <pre id="output">Система готова...</pre>
+        </div>
+    </div>
+
+    <div class="right-panel">
+        <div class="card" style="height: 100%;">
+            <h2>Все проекты (Live)</h2>
+            <div id="projectGrid" class="scroll-area">
+                <p id="emptyMsg" style="text-align:center; color:#999; margin-top:50px;">Подключение к сокетам...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let stompClient = null;
+    let subscribedProjects = new Set();
+
+    window.onload = () => {
+        const token = localStorage.getItem('accessToken');
+        if (!token) {
+            window.location.href = '/auth/login';
+        } else {
+            loadUserInfo();
+            loadInitialProjects();
+            connectWebSocket();
+        }
+    };
+
+    async function loadInitialProjects() {
+        const projects = await apiRequest('/project/all', 'GET');
+        if (projects && Array.isArray(projects)) {
+            const grid = document.getElementById('projectGrid');
+            grid.innerHTML = '';
+            if (projects.length === 0) {
+                grid.innerHTML = '<p id="emptyMsg" style="text-align:center; margin-top:50px;">Проектов пока нет</p>';
+            }
+            projects.forEach(p => addProjectToUI(p));
+        }
+    }
+
+    async function logout() {
+        const refreshToken = localStorage.getItem('refreshToken');
+        try {
+            await fetch('/api/auth/logout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ refreshToken: refreshToken })
+            });
+        } catch (e) {
+            console.error("Ошибка при выходе:", e);
+        } finally {
+            localStorage.clear();
+            sessionStorage.clear();
+            window.location.href = '/auth/login';
+        }
+    }
+
+    function joinProjectWs() {
+    const projectId = document.getElementById('idInput').value;
+    if (!projectId) return alert("Введите ID проекта");
+
+    if (stompClient && stompClient.connected) {
+        if (!subscribedProjects.has(projectId)) {
+            stompClient.subscribe(`/topic/project/${projectId}`, (msg) => {
+                const data = JSON.parse(msg.body);
+                printLog(`Обновление проекта ${projectId}: ${data.name}`);
+            });
+            subscribedProjects.add(projectId);
+        }
+        stompClient.send(`/app/project/${projectId}/join`, {}, {});
+        printLog(`Запрос на вступление в проект #${projectId} отправлен`);
+    } else {
+        alert("Ошибка: WebSocket не подключен");
+    }
+
+    function goToProject() {
+    const id = document.getElementById('idInput').value;
+    if (!id || id.trim() === "") {
+        alert("Пожалуйста, введите ID проекта");
+        return;
+    }
+    // Перенаправляем на страницу проекта
+    window.location.href = `/project-page?id=${id}`;
+}
+}
+
+    function connectWebSocket() {
+        const socket = new SockJS('/ws-project');
+        stompClient = Stomp.over(socket);
+        const token = localStorage.getItem('accessToken');
+        const csrfToken = document.cookie.replace(/(?:(?:^|.*;\s*)XSRF-TOKEN\s*\=\s*([^;]*).*$)|^.*$/, "$1");
+
+        stompClient.connect({
+            'Authorization': 'Bearer ' + token,
+            'X-XSRF-TOKEN': csrfToken
+        }, (frame) => {
+            updateStatus(true);
+            printLog("WS подключен");
+            stompClient.subscribe('/topic/projects/new', (msg) => {
+                const project = JSON.parse(msg.body);
+                addProjectToUI(project);
+            });
+        }, (err) => {
+            updateStatus(false);
+            printLog("Ошибка WS: " + err);
+        });
+    }
+
+    function createProjectWs() {
+        const nameEl = document.getElementById('nameInput');
+        const descEl = document.getElementById('descInput');
+        if (!nameEl.value.trim()) return alert("Название обязательно");
+        if (stompClient && stompClient.connected) {
+            stompClient.send("/app/project.create", {}, JSON.stringify({
+                name: nameEl.value.trim(),
+                description: descEl.value.trim()
+            }));
+            nameEl.value = ''; descEl.value = '';
+        }
+    }
+
+    function addProjectToUI(project) {
+        const grid = document.getElementById('projectGrid');
+        if (document.getElementById(`proj-${project.id}`)) return;
+        const card = document.createElement('div');
+        card.className = 'project-card';
+        card.id = `proj-${project.id}`;
+        card.innerHTML = `
+            <div class="project-meta">
+                <b>${project.name}</b>
+                <span>ID: ${project.id}</span>
+            </div>
+            <a href="/project-page?id=${project.id}"><button class="btn-info">Открыть</button></a>
+        `;
+        const emptyMsg = document.getElementById('emptyMsg');
+        if (emptyMsg) emptyMsg.remove();
+        grid.insertBefore(card, grid.firstChild);
+    }
+
+    async function apiRequest(url, method, body = null) {
+        const token = localStorage.getItem('accessToken');
+        const res = await fetch(url, {
+            method: method,
+            headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+            body: body ? JSON.stringify(body) : null
+        });
+        if (res.status === 401) logout();
+        return res.ok ? await res.json() : null;
+    }
+
+    async function loadUserInfo() {
+        const user = await apiRequest('/user/me', 'POST');
+        document.getElementById('userNameDisplay').innerText =
+            (user && user.username) ? "Привет, " + user.username : "Привет, пользователь!";
+    }
+
+    function printLog(m) {
+        const o = document.getElementById('output');
+        o.innerText = `[${new Date().toLocaleTimeString()}] ${m}\n` + o.innerText;
+    }
+
+    function updateStatus(online) {
+        const s = document.getElementById('wsStatus');
+        s.innerText = online ? "WebSocket: Подключен" : "WebSocket: Отключен";
+        s.className = `status-badge ${online ? 'online' : 'offline'}`;
+    }
+</script>
+</body>
+</html>

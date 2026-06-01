@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Детали проекта</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sockjs-client/1.5.1/sockjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/stomp.js/2.3.3/stomp.min.js"></script>
+    <style>
+        :root { --primary: #007bff; --bg: #f4f7f6; --text: #333; --danger: #dc3545; --warning: #fff3cd; --success: #d1e7dd; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); padding: 40px; color: var(--text); }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .header { border-bottom: 2px solid #eee; padding-bottom: 20px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        h1 { margin: 0; color: #2c3e50; }
+        #projectDesc { color: #666; margin: 5px 0 0 0; font-size: 1rem; }
+        .archive-banner { background: var(--warning); color: #856404; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; font-weight: bold; border: 1px solid #ffeeba; }
+        .edit-section { background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 20px; border: 1px solid #dee2e6; }
+        .edit-section input, .edit-section textarea { width: 100%; margin-bottom: 10px; padding: 8px; box-sizing: border-box; }
+        .participant-list { display: grid; gap: 10px; }
+        .participant-item { background: #f8f9fa; padding: 10px 16px; border-radius: 8px; display: flex; align-items: center; justify-content: space-between; }
+        .role-tag { background: var(--success); color: #0f5132; font-size: 0.7rem; padding: 2px 8px; border-radius: 4px; text-transform: uppercase; margin-right: 10px; }
+        .btn { border: none; padding: 8px 12px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; font-weight: bold; transition: opacity 0.2s; margin-left: 5px; }
+        .btn:hover { opacity: 0.8; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-transfer { background: #ffc107; }
+        .btn-archive { background: #dc3545; color: white; }
+        .btn-delete { background: #dc3545; color: white; }
+        select.btn { border: 1px solid #ccc; background: white; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div id="bannerArea"></div>
+    <div class="header">
+        <div>
+            <h1 id="projectName">Загрузка...</h1>
+            <p id="projectDesc"></p>
+        </div>
+        <div>
+            <button class="btn btn-primary" onclick="goToTasks()">📋 Задачи</button>
+            <button id="editToggleBtn" class="btn btn-primary" style="display: none;" onclick="toggleEdit(true)">Редактировать</button>
+            <button id="archiveBtn" class="btn btn-archive" style="display: none;" onclick="archiveProject()">Архивировать</button>
+        </div>
+    </div>
+
+    <div id="editSection" class="edit-section" style="display: none;">
+        <input type="text" id="editName" placeholder="Название проекта">
+        <textarea id="editDesc" placeholder="Описание проекта" rows="3"></textarea>
+        <button class="btn btn-primary" onclick="submitUpdate()">Сохранить</button>
+        <button class="btn" onclick="toggleEdit(false)">Отмена</button>
+    </div>
+
+    <div class="section">
+        <h2>Команда проекта</h2>
+        <div id="participants" class="participant-list"></div>
+    </div>
+</div>
+
+<script>
+    const projectId = new URLSearchParams(window.location.search).get('id');
+    const currentUserId = parseInt(localStorage.getItem('currentUserId'));
+    let stompClient = null;
+    let currentProject = null;
+
+    window.onload = () => {
+        const token = localStorage.getItem('accessToken');
+        connectWebSocket(token);
+        fetch(`/project/${projectId}`, { headers: { 'Authorization': 'Bearer ' + token } })
+        .then(res => res.json())
+        .then(p => renderPage(p));
+    };
+
+    // Функция перехода на задачи
+    function goToTasks() {
+        if (projectId) {
+            window.location.href = `/tasks?projectId=${projectId}`;
+        }
+    }
+
+    function connectWebSocket(token) {
+        const socket = new SockJS('/ws-project');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({ 'Authorization': 'Bearer ' + token }, () => {
+            stompClient.subscribe(`/topic/project/${projectId}`, (msg) => {
+                renderPage(JSON.parse(msg.body));
+            });
+        });
+    }
+
+    function archiveProject() {
+        const days = prompt("Через сколько дней удалить проект окончательно?", "30");
+        if (days !== null) {
+            stompClient.send(`/app/project/${projectId}/archive`, {}, JSON.stringify({ daysToKeep: parseInt(days) }));
+        }
+    }
+
+    function removeParticipant(userId) {
+        if (confirm("Удалить участника из проекта?")) {
+            stompClient.send(`/app/project/${projectId}/delete-participant`, {}, JSON.stringify(parseInt(userId)));
+        }
+    }
+
+    function assignRole(event, userId, newRole) {
+        event.stopPropagation();
+        stompClient.send(`/app/project/${projectId}/assign-role`, {}, JSON.stringify({
+            userId: parseInt(userId),
+            newRole: newRole
+        }));
+    }
+
+    function toggleEdit(show) {
+        document.getElementById('editSection').style.display = show ? 'block' : 'none';
+        document.getElementById('editToggleBtn').style.display = show ? 'none' : 'block';
+        if (show && currentProject) {
+            document.getElementById('editName').value = currentProject.name;
+            document.getElementById('editDesc').value = currentProject.description || '';
+        }
+    }
+
+    function submitUpdate() {
+        stompClient.send(`/app/project/update`, {}, JSON.stringify({
+            id: parseInt(projectId),
+            name: document.getElementById('editName').value,
+            description: document.getElementById('editDesc').value,
+            status: currentProject.status
+        }));
+        toggleEdit(false);
+    }
+
+    function transferOwnership(userId) {
+        if (confirm("Передать права владельца?")) {
+            stompClient.send(`/app/project/${projectId}/transfer`, {}, JSON.stringify({
+                projectId: parseInt(projectId),
+                userDestId: parseInt(userId)
+            }));
+        }
+    }
+
+    function renderPage(p) {
+        currentProject = p;
+        document.getElementById('projectName').innerText = p.name;
+        document.getElementById('projectDesc').innerText = p.description || 'Описание отсутствует';
+
+        const bannerArea = document.getElementById('bannerArea');
+        bannerArea.innerHTML = (p.status === 'ARCHIVED') ? `<div class="archive-banner">⚠️ Проект в архиве</div>` : '';
+
+        const ownerMember = p.members.find(m => m.projectRole === 'OWNER');
+        const isCurrentUserOwner = ownerMember && (ownerMember.userId || ownerMember.id) === currentUserId;
+
+        document.getElementById('editToggleBtn').style.display = isCurrentUserOwner ? 'block' : 'none';
+        document.getElementById('archiveBtn').style.display = (isCurrentUserOwner && p.status !== 'ARCHIVED') ? 'block' : 'none';
+
+        const partDiv = document.getElementById('participants');
+        const roles = ["DEVELOPER", "MANAGER", "VIEWER", "MEMBER"];
+
+        partDiv.innerHTML = p.members.map(m => {
+            const uid = m.userId || m.id;
+            const isSelf = (uid === currentUserId);
+            const showTransfer = isCurrentUserOwner && m.projectRole !== 'OWNER';
+            const showDelete = isCurrentUserOwner && !isSelf;
+
+            return `
+            <div class="participant-item">
+                <div>
+                    <span class="role-tag">${m.projectRole}</span>
+                    <span>${m.name}</span>
+                </div>
+                <div>
+                    ${isCurrentUserOwner && !isSelf ? `
+                        <select class="btn" onchange="assignRole(event, '${uid}', this.value)">
+                            <option value="" disabled selected>Сменить роль</option>
+                            ${roles.map(r => `<option value="${r}">${r}</option>`).join('')}
+                        </select>
+                    ` : ''}
+                    ${showTransfer ? `<button class="btn btn-transfer" onclick="transferOwnership('${uid}')">Владелец</button>` : ''}
+                    ${showDelete ? `<button class="btn btn-delete" onclick="removeParticipant('${uid}')">Удалить</button>` : ''}
+                </div>
+            </div>`;
+        }).join('');
+    }
+</script>
+</body>
+</html>

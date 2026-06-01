@@ -6,6 +6,7 @@ import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -38,6 +39,9 @@ public class Project {
 
     @Column(name = "date_of_creation")
     private Date dateOfCreation;
+
+    @Column(name = "date_of_deletion")
+    private LocalDateTime dateOfDeletion;
 
     public Long getId() {
         return id;
@@ -87,12 +91,24 @@ public class Project {
         this.dateOfCreation = dateOfCreation;
     }
 
+    public LocalDateTime getDateOfDeletion() {
+        return dateOfDeletion;
+    }
+
+    public void setDateOfDeletion(LocalDateTime dateOfDeletion) {
+        this.dateOfDeletion = dateOfDeletion;
+    }
+
     public List<ProjectMember> getProjectMembers() {
         return projectMembers;
     }
 
     public void setProjectMembers(List<ProjectMember> projectMembers) {
         this.projectMembers = projectMembers;
+    }
+
+    public void addMemberInProject(ProjectMember member) {
+        projectMembers.add(member);
     }
 
     public void addTask(Task task) {
